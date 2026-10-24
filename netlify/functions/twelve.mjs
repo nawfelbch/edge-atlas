@@ -28,8 +28,13 @@ export default async (req) => {
   for (const [k, v] of Object.entries({ symbol, interval, outputsize: '500', timezone: 'UTC', order: 'desc', apikey: cle })) cible.searchParams.set(k, v)
   try {
     const amont = await fetch(cible, { signal: AbortSignal.timeout(20000), redirect: 'error', headers: { Accept: 'application/json' } })
-    if (!amont.ok) return reponse(amont.status, { error: 'Source indisponible : HTTP ' + amont.status })
     const texte = await amont.text()
+    // Message de Twelve Data recopié (symbole inconnu, plan insuffisant, quota…)
+    if (!amont.ok) {
+      let message = ''
+      try { message = JSON.parse(texte).message || '' } catch { /* réponse non JSON */ }
+      return reponse(amont.status, { error: 'Réponse Twelve Data ' + amont.status + (message ? ' : ' + message : '') })
+    }
     if (texte.length > 8 * 1024 * 1024) return reponse(502, { error: 'Réponse trop volumineuse' })
     return reponse(200, texte)
   } catch (err) {
