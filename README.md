@@ -17,3 +17,10 @@ Double-cliquer `DEMARRER.cmd` (Node.js requis), puis ouvrir http://127.0.0.1:417
 Sans serveur : ouvrir `EDGE-ATLAS.html`.
 
 Voir `LIRE-MOI.txt` pour le détail et les limites.
+
+## Backtest chiffré multi-horizons (sur ton PC)
+`node backtest/multi-tf.mjs` télécharge de vrais cours (Binance ; Forex/or si
+`TWELVE_DATA_API_KEY` est définie) et teste les stratégies du site (moteur
+`dist/engine.js`) sur W, D, H4, H1, M15, plus un filtre de tendance journalière.
+Réglages choisis sur les 70 % anciens, mesurés sur les 30 % récents. Résultats
+dans `backtest/resultats/` (CSV + HTML, non envoyés sur GitHub).
