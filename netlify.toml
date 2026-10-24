@@ -1,10 +1,16 @@
 # EDGE ATLAS — site statique (dossier dist) + une fonction pour FRED.
-# Binance et Twelve Data sont appelés directement par le navigateur (CORS
-# autorisé ; Binance refuse souvent les serveurs situés aux États-Unis).
+# Binance est appelé directement par le navigateur (il refuse souvent les
+# serveurs situés aux États-Unis). Twelve Data passe par twelve.mjs : la clé
+# reste sur Netlify, protégée par le mot de passe du site.
 # FRED n'autorise pas l'appel direct : la fonction fred.mjs relaie la lecture.
 [build]
   publish = "dist"
   functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/twelve"
+  to = "/.netlify/functions/twelve"
+  status = 200
 
 [[redirects]]
   from = "/api/fred"
