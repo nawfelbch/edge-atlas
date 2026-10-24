@@ -14,7 +14,14 @@ let local=new URL(req.url,'http://127.0.0.1:'+port);
 if(local.pathname==='/api/health')return send(res,200,{service:'edge-atlas-personal',readOnly:true});
 if(local.pathname.startsWith('/api/')){
 let target,type='application/json; charset=utf-8';
-if(local.pathname==='/api/fred'){let id=local.searchParams.get('id');if(!series.has(id))return send(res,400,{error:'Série non autorisée'});target=new URL('https://fred.stlouisfed.org/graph/fredgraph.csv');target.searchParams.set('id',id);type='text/csv; charset=utf-8'}
+if(local.pathname==='/api/fed'){target=new URL('https://www.federalreserve.gov/feeds/press_monetary.xml');type='application/xml; charset=utf-8'}
+else if(local.pathname==='/api/calendar'){
+let key=req.headers['x-data-key'];if(typeof key!=='string'||!/^[A-Za-z0-9_:+.=-]{5,256}$/.test(key))return send(res,400,{error:'Clé Trading Economics manquante ou invalide'});
+let start=local.searchParams.get('start'),end=local.searchParams.get('end');
+const dateOK=x=>typeof x==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x)&&Number.isFinite(Date.parse(x))&&new Date(x).toISOString().slice(0,10)===x;
+if(!dateOK(start)||!dateOK(end)||end<start||(Date.parse(end)-Date.parse(start))/86400000>31)return send(res,400,{error:'Période invalide : 31 jours maximum'});
+target=new URL('https://api.tradingeconomics.com/calendar/country/All/'+start+'/'+end);target.searchParams.set('c',key);target.searchParams.set('f','json');target.searchParams.set('values','true')}
+else if(local.pathname==='/api/fred'){let id=local.searchParams.get('id');if(!series.has(id))return send(res,400,{error:'Série non autorisée'});target=new URL('https://fred.stlouisfed.org/graph/fredgraph.csv');target.searchParams.set('id',id);type='text/csv; charset=utf-8'}
 else if(['/api/binance','/api/twelve'].includes(local.pathname)){let symbol=local.searchParams.get('symbol'),interval=local.searchParams.get('interval');if(!symbol||!/^[-A-Za-z0-9_./:^ ]{1,40}$/.test(symbol)||!frames.has(interval))return send(res,400,{error:'Symbole ou unité invalide'});let twelve=local.pathname==='/api/twelve';target=new URL(twelve?'https://api.twelvedata.com/time_series':'https://api.binance.com/api/v3/klines');target.searchParams.set('symbol',symbol);target.searchParams.set('interval',interval);if(twelve){let dataKey=req.headers['x-data-key'];if(typeof dataKey!=='string'||!/^[A-Za-z0-9_-]{5,256}$/.test(dataKey))return send(res,400,{error:'Clé de données manquante ou invalide'});target.searchParams.set('apikey',dataKey);target.searchParams.set('outputsize','500');target.searchParams.set('timezone','UTC');target.searchParams.set('order','desc')}else target.searchParams.set('limit','500')}
 else return send(res,404,{error:'Endpoint non autorisé'});
 let upstream=await fetch(target,{signal:AbortSignal.timeout(25000),redirect:'error',headers:{Accept:type}});
