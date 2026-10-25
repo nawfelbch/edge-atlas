@@ -26,6 +26,9 @@ const CRYPTO = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT']
 const FOREX = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'XAU/USD']
 // Réglages par défaut du laboratoire du site
 const COUTS = { fee: 5, slip: 3, borrow: 3 }
+// Forex : spread réel bien plus faible, pas d'emprunt sur un short (le swap
+// n'est pas modélisé)
+const COUTS_FX = { fee: 0.5, slip: 0.5, borrow: 0 }
 const DEFAUT = { fast: 15, slow: 60 }
 const STRATEGIES = [
   { id: 'tendance L+S', strategy: 'trend', mode: 'both' },
@@ -74,7 +77,7 @@ const versMoteur = (bars, f) => bars.map((b) => ({ t: b.t, date: new Date(b.t).t
 
 // Le moteur facture l'emprunt d'un short par jour, au minimum 1 jour par
 // bougie : en intraday on ramène le taux à la durée réelle de la bougie.
-const emprunt = (f) => (FRAMES[f].days < 1 ? COUTS.borrow * FRAMES[f].days : COUTS.borrow)
+const emprunt = (f, taux) => (FRAMES[f].days < 1 ? taux * FRAMES[f].days : taux)
 
 // ---------- Règle multi-horizon (hors moteur du site) ----------
 // Copie fidèle de la boucle du moteur, avec un filtre de sens : le signal de
@@ -135,9 +138,10 @@ function sharpe(r, data) {
   return sd && ans > 0 ? m / sd * Math.sqrt(r.returns.length / ans) : null
 }
 
-function evaluer(data, f, s, filtre) {
+function evaluer(data, f, s, filtre, forex) {
   const split = Math.floor(data.length * 0.7)
-  const base = { ...COUTS, borrow: emprunt(f), strategy: s.strategy, mode: s.mode }
+  const couts = forex ? COUTS_FX : COUTS
+  const base = { ...couts, borrow: emprunt(f, couts.borrow), strategy: s.strategy, mode: s.mode }
   const lancer = (d, o) => (filtre ? backtestFiltre(d, o, filtre) : E.backtest(d, o))
   // 1) réglages par défaut du site, évalués sur les 30 % finaux
   const def = lancer(data, { ...base, ...DEFAUT, start: split })
@@ -171,6 +175,9 @@ for (const paire of paires) {
       process.stdout.write('Téléchargement ' + paire + ' ' + f + '… ')
       const bars = forex ? await twelve(paire, f) : await binance(paire, f)
       series[f] = versMoteur(bars, f)
+      // Forex en journalier : les bougies du samedi et du dimanche sont des
+      // cotations sans échanges qui faussent les moyennes mobiles
+      if (forex && f === 'D') series[f] = series[f].filter((b) => ![0, 6].includes(new Date(b.t).getUTCDay()))
       console.log(series[f].length + ' bougies')
     } catch (err) { console.log('échec'); erreurs.push(paire + ' ' + f + ' : ' + err.message) }
   }
@@ -192,7 +199,7 @@ for (const paire of paires) {
     }
     for (const v of variantes) {
       try {
-        const { split, def, opt, best } = evaluer(data, f, v.s, v.filtre)
+        const { split, def, opt, best } = evaluer(data, f, v.s, v.filtre, forex)
         lignes.push({
           paire, horizon: f, strategie: v.nom,
           periode_test: data[split].date.slice(0, 10) + ' → ' + data.at(-1).date.slice(0, 10),
@@ -211,7 +218,7 @@ for (const paire of paires) {
 if (!lignes.length) { console.log('\nAucun résultat.\n' + erreurs.join('\n')); process.exit(1) }
 
 // ---------- Synthèse ----------
-console.log('\nRÉSULTATS HORS ÉCHANTILLON (30 % finaux) — réglages du site 15/60, frais 5 pb + glissement 3 pb par côté')
+console.log('\nRÉSULTATS HORS ÉCHANTILLON (30 % finaux) — réglages du site 15/60 ; coûts : 5 + 3 pb par côté (crypto), 0,5 + 0,5 pb sans emprunt (Forex/or) ; week-ends retirés du journalier Forex')
 console.table(lignes.map((l) => ({ paire: l.paire, tf: l.horizon, strategie: l.strategie, rendement: pct(l.rendement_defaut), 'achat-cons.': pct(l.achat_conservation), drawdown: pct(l.drawdown_defaut), trades: l.transactions_defaut, PF: nb(l.pf_defaut), Sharpe: nb(l.sharpe_defaut), 'optimisé 70% → test': pct(l.rendement_exploration_optimise) + ' → ' + pct(l.rendement_test_optimise) })))
 
 const bat = lignes.filter((l) => l.rendement_defaut > l.achat_conservation).length
@@ -240,7 +247,7 @@ fs.writeFileSync(path.join(dossier, 'backtest-' + stamp + '.csv'), '﻿' + csv)
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 const cellule = (x, ref) => '<td class="' + (x > (ref ?? 0) ? 'p' : 'n') + '">' + pct(x) + '</td>'
 const html = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EDGE ATLAS — backtest multi-horizons</title><style>body{font:14px system-ui,sans-serif;margin:24px;color:#192723;background:#eeeee6}table{border-collapse:collapse;width:100%;background:#fbfcf5}th,td{border:1px solid #ced2c6;padding:6px 8px;text-align:right;white-space:nowrap}th,td:nth-child(-n+3){text-align:left}.p{color:#2d715d}.n{color:#b44739}.wrap{overflow-x:auto}</style>' +
-  '<h1>Backtest multi-horizons</h1><p>Généré le ' + esc(new Date().toLocaleString('fr-FR')) + ' · moteur EDGE ATLAS · hors échantillon = 30 % finaux · frais 5 pb + glissement 3 pb par côté · capital 10 000. Simulation, sans valeur de prévision.</p>' +
+  '<h1>Backtest multi-horizons</h1><p>Généré le ' + esc(new Date().toLocaleString('fr-FR')) + ' · moteur EDGE ATLAS · hors échantillon = 30 % finaux · coûts 5 + 3 pb par côté (crypto), 0,5 + 0,5 pb sans emprunt (Forex/or) · week-ends retirés du journalier Forex · capital 10 000. Simulation, sans valeur de prévision.</p>' +
   '<div class="wrap"><table><tr><th>Paire</th><th>TF</th><th>Stratégie</th><th>Période test</th><th>Rendement</th><th>Achat-cons.</th><th>Drawdown</th><th>Trades</th><th>Réussite</th><th>PF</th><th>Sharpe</th><th>Réglage optimisé</th><th>Exploration</th><th>Test</th></tr>' +
   lignes.map((l) => '<tr><td>' + esc(l.paire) + '</td><td>' + l.horizon + '</td><td>' + esc(l.strategie) + '</td><td>' + esc(l.periode_test) + '</td>' + cellule(l.rendement_defaut, l.achat_conservation) + cellule(l.achat_conservation) + '<td>' + pct(l.drawdown_defaut) + '</td><td>' + l.transactions_defaut + '</td><td>' + pct(l.reussite_defaut) + '</td><td>' + nb(l.pf_defaut) + '</td><td>' + nb(l.sharpe_defaut) + '</td><td>' + l.reglage_optimise + '</td>' + cellule(l.rendement_exploration_optimise) + cellule(l.rendement_test_optimise) + '</tr>').join('') + '</table></div>' +
   (erreurs.length ? '<h2>Non testé</h2><ul>' + erreurs.map((e) => '<li>' + esc(e) + '</li>').join('') + '</ul>' : '')
