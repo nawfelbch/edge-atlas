@@ -18,3 +18,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}img,svg,video{max-width
 @media(max-width:400px){input,select,textarea{max-width:100%;min-width:0}.form-grid>*,.card,.workspace>*{min-width:0}header{margin:0 16px}.section{padding:30px 16px}.results{padding:12px}.radar-workspace .controls{padding:16px}.radar-banner{padding:16px}}
 
 .challenge-levels{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.challenge-levels .card{padding:22px}.challenge-levels h3{font-size:24px}.answer.selected{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}.question textarea{width:100%;padding:12px;border:1px solid var(--line);font:inherit;resize:vertical}.question button:focus-visible{outline:3px solid var(--green);outline-offset:3px}@media(max-width:1100px){.challenge-levels{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.challenge-levels{grid-template-columns:1fr}.question h3{font-size:21px}}
+
+/* Laboratoire > Mes candidats */
+.candidate{margin-top:18px}.candidate h4{font-family:Manrope,sans-serif;margin:18px 0 6px}.candidate ul{padding-left:20px;margin:0}.candidate li{margin:6px 0;line-height:1.5}

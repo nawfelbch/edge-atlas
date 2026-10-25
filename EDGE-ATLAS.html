@@ -18,6 +18,9 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}img,svg,video{max-width
 @media(max-width:400px){input,select,textarea{max-width:100%;min-width:0}.form-grid>*,.card,.workspace>*{min-width:0}header{margin:0 16px}.section{padding:30px 16px}.results{padding:12px}.radar-workspace .controls{padding:16px}.radar-banner{padding:16px}}
 
 .challenge-levels{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.challenge-levels .card{padding:22px}.challenge-levels h3{font-size:24px}.answer.selected{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}.question textarea{width:100%;padding:12px;border:1px solid var(--line);font:inherit;resize:vertical}.question button:focus-visible{outline:3px solid var(--green);outline-offset:3px}@media(max-width:1100px){.challenge-levels{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.challenge-levels{grid-template-columns:1fr}.question h3{font-size:21px}}
+
+/* Laboratoire > Mes candidats */
+.candidate{margin-top:18px}.candidate h4{font-family:Manrope,sans-serif;margin:18px 0 6px}.candidate ul{padding-left:20px;margin:0}.candidate li{margin:6px 0;line-height:1.5}
 </style></head><body>
 <a class="skip" href="#main">Aller au contenu</a><aside class="rail"><a href="#accueil" class="brand" aria-label="Edge Atlas accueil">E<span>↗</span></a><span class="rail-text">LE RISQUE AVANT LE RENDEMENT</span><span class="rail-bottom">EA / 01</span></aside>
 <div class="shell"><header><a class="wordmark" href="#accueil">EDGE <b>ATLAS</b><small>TRADING RESEARCH LAB</small></a><nav aria-label="Navigation principale"><a href="#radar">Mon radar ↗</a><a href="#apprendre">Comprendre</a><a href="#strategies">Stratégies</a><a href="#laboratoire">Laboratoire <span>↗</span></a><a href="#defis">Se challenger</a></nav><a class="source-link" href="#sources">Sources & risques ↗</a></header>
@@ -1038,6 +1041,60 @@ const api={bank,levels,grade,session,answer,advance,stats,render};if(typeof modu
 })(typeof window!=='undefined'?window:globalThis);
 
 ;
+// Laboratoire > Mes candidats : stratégies repérées par les recherches
+// (backtest/forex-recherche.mjs, backtest/multi-tf.mjs), conservées pour être
+// re-testées. Chiffres réels des tests du 25/10/2026, sans valeur de prévision.
+(function () {
+'use strict';
+const candidats = [
+  {
+    nom: 'Carry confirmé par le momentum 12 mois', horizon: 'Mensuel · 6 paires', statut: 'Piste la plus sérieuse',
+    regle: 'Chaque fin de mois, acheter la devise dont le taux à 3 mois est le plus élevé (écart > 0,25 %), seulement si la paire a monté sur 12 mois (et l’inverse pour vendre). Taille de position visant 10 % de volatilité annuelle par paire. Swap compté, moins 0,5 %/an de marge courtier.',
+    chiffres: [['Bénéfice (validation ≈ 7,5 ans)', '+10,8 %', 'positive'], ['Drawdown maximal', '10,7 %', 'negative'], ['Bénéfice / drawdown', '1,00'], ['Paires positives', '4 / 6']],
+    details: 'Dont +5,7 % de swap. Environ 1,4 % par an pour 10 % de volatilité. Paires : EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, XAU/USD.',
+    limites: ['Négative sur la période ancienne (bénéfice / drawdown −0,77) : elle dépend des écarts de taux, élevés depuis 2022.', 'Taux EUR et GBP arrêtés en janvier 2026 et prolongés : léger flou sur 2026.', 'Pas encore confirmée sur des paires non utilisées pour choisir.'],
+  },
+  {
+    nom: 'Rupture 55/20 avec filtre journalier et stop suiveur', horizon: 'H4 · 6 paires', statut: 'À confirmer',
+    regle: 'En H4, acheter à la clôture au-dessus du plus haut des 55 bougies précédentes (vendre sous le plus bas), seulement dans le sens de la tendance journalière (moyennes 15/60 du journalier). Stop suiveur à 2 ATR, sortie sur rupture inverse des 20 bougies. Risque 0,5 % du capital par position.',
+    chiffres: [['Bénéfice (validation ≈ 1 an)', '+1,4 %', 'positive'], ['Drawdown maximal', '1,2 %', 'negative'], ['Bénéfice / drawdown', '1,17'], ['Transactions', '149']],
+    details: 'Positive sur 3 paires sur 6. La version 55/27 donne le même résultat : c’est presque toujours le stop suiveur qui fait sortir.',
+    limites: ['Seulement 8e sur la période de recherche : retenue après avoir vu la validation, donc risque de sélection a posteriori.', 'Gains faibles en valeur absolue avec 0,5 % de risque par position.', 'Pas encore confirmée sur des paires non utilisées pour choisir.'],
+  },
+  {
+    nom: 'Tendance 10/50 avec filtre journalier et stop suiveur', horizon: 'H4 · 6 paires', statut: 'À surveiller',
+    regle: 'En H4, entrer au croisement des moyennes 10 et 50, seulement dans le sens de la tendance journalière. Stop suiveur à 2 ATR. Risque 0,5 % par position.',
+    chiffres: [['Bénéfice (validation ≈ 1 an)', '+0,8 %', 'positive'], ['Drawdown maximal', '1,4 %', 'negative'], ['Bénéfice / drawdown', '0,59'], ['Transactions', '133']],
+    details: 'Famille la plus régulière de la validation glissante H4 (gains sur 2 périodes sur 4).',
+    limites: ['Bénéfice inférieur au drawdown.'],
+  },
+  {
+    nom: 'Retour RSI 25/75 avec filtre SMA 200', horizon: 'H4 · 6 paires', statut: 'Trop peu de transactions',
+    regle: 'En H4, acheter quand le RSI14 passe sous 25 au-dessus de la SMA 200 (vendre au-dessus de 75 sous la SMA 200). Sortie au retour du RSI vers 50 ou au stop à 2 ATR.',
+    chiffres: [['Bénéfice (validation)', '+0,1 %', 'positive'], ['Drawdown maximal', '0,2 %', 'negative'], ['Bénéfice / drawdown', '0,77'], ['Transactions', '6']],
+    details: 'Positive sur 4 paires sur 6, mais une seule transaction par paire.',
+    limites: ['6 transactions : impossible de distinguer le résultat du hasard.'],
+  },
+]
+const lecons = [
+  'Les réglages « optimisés » sur le passé s’effondrent souvent ensuite (exemple : BTC journalier, +836 % en recherche → −3 % en validation). Les réglages par défaut font souvent mieux.',
+  'EUR/USD journalier : les bougies de week-end des flux Forex faussaient les moyennes (+1,13 % avec, −0,64 % sans). Elles sont désormais retirées automatiquement.',
+  'Coûts Forex réalistes : 0,5 + 0,5 pb par côté, sans emprunt sur un short ; le swap compte, surtout pour le carry.',
+  'Aucune des 325 configurations Forex n’a réussi les trois tests à la fois (découpage 60/40, primes documentées, validation glissante).',
+  'En validation glissante, choisir chaque fois « le meilleur du passé » a perdu en journalier (−4,0 %) et presque rien gagné en H4 (+0,3 %).',
+]
+function render() {
+  $('#main').innerHTML = title('03 / LABORATOIRE', 'Mes candidats.', 'Les stratégies repérées par les recherches, gardées pour être re-testées. Une candidate n’est pas une stratégie validée : résultats simulés, sans valeur de prévision.') +
+    '<section class="section" style="padding-top:0">' + labNav('cand') +
+    '<div class="notice warn"><b>À lire avant tout.</b> Chiffres des tests du 25/10/2026 sur cours réels (Twelve Data, Binance), moteur EDGE ATLAS. Aucune stratégie n’a encore passé tous les tests. Prochaine étape prévue : tester les candidats tels quels sur EUR/GBP, EUR/JPY, GBP/JPY, NZD/USD, USD/CHF et AUD/JPY, jamais utilisées pour choisir.</div>' +
+    candidats.map((c, i) => '<article class="card candidate"><span class="num">CANDIDAT ' + (i + 1) + ' · ' + esc(c.horizon) + ' · ' + esc(c.statut.toUpperCase()) + '</span><h3>' + esc(c.nom) + '</h3><p>' + esc(c.regle) + '</p>' + metrics(c.chiffres.map(([l, v, cl]) => [esc(l), esc(v), cl])) + '<p class="hint">' + esc(c.details) + '</p><h4>Limites</h4><ul>' + c.limites.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul></article>').join('') +
+    '<article class="card candidate"><span class="num">CE QUE LES TESTS ONT APPRIS</span><ul>' + lecons.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul><p class="hint">Détail et commandes : <code>backtest/candidats.md</code> et <code>backtest/forex-recherche.mjs --candidats</code> dans le dépôt edge-atlas.</p></article>' +
+    '</section>'
+  bindNav()
+}
+window.CandidatsPage = { render }
+})();
+
 'use strict';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)], E=Engine;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1072,7 +1129,7 @@ function lesson(id,refresh){let l=CONTENT.lessons.find(x=>x.id===id);$('#lessonC
 function strategies(){
 $('#main').innerHTML=title('02 / HYPOTHÈSES DE RECHERCHE','L’avantage se démontre.','Des approches connues et des pistes plus spécialisées. Leur potentiel dépend du régime, de l’exécution, des coûts et de la capacité à les tester honnêtement.')+'<section class="section" style="padding-top:0"><div class="notice warn">Aucune de ces fiches n’est un signal d’achat ou de vente. Les travaux historiques documentent des phénomènes sur certains marchés et certaines périodes ; ils ne garantissent pas qu’une variante exploitable reste rentable aujourd’hui.</div>'+CONTENT.strategies.map((s,i)=>'<article class="strategy"><div><span class="tag">'+String(i+1).padStart(2,'0')+' / '+esc(s.level)+'</span><h3>'+esc(s.title)+'</h3>'+srcLinks(s.sourceIds)+'</div><dl><dt>Mécanisme</dt><dd>'+esc(s.idea)+'</dd><dt>Protocole</dt><dd>'+esc(s.rules)+'</dd><dt>Échec possible</dt><dd>'+esc(s.failure)+'</dd><dt>À vérifier</dt><dd>'+esc(s.validation)+'</dd></dl></article>').join('')+'<div class="ribbon"><div><h3>Testez une règle, pas un récit.</h3><p>Le laboratoire propose deux règles simples de moyennes mobiles pour apprendre les biais. Les stratégies de cette bibliothèque ne sont pas toutes implémentées.</p></div><a class="btn" href="#backtest">Ouvrir le backtest ↗</a></div></section>'}
 function field(id,label,value,min,max,step=1){return '<label>'+label+'<input id="'+id+'" type="number" value="'+value+'" min="'+min+'" '+(max!==null?'max="'+max+'"':'')+' step="'+step+'" required></label>'}
-function labNav(active){return '<div class="toolbar"><div class="segmented"><button data-route="laboratoire" class="'+(active==='sim'?'selected':'')+'">Position long / short</button><button data-route="backtest" class="'+(active==='back'?'selected':'')+'">Backtest & robustesse</button><button data-route="macro" class="'+(active==='macro'?'selected':'')+'">Scénarios macro</button></div></div>'}
+function labNav(active){return '<div class="toolbar"><div class="segmented"><button data-route="laboratoire" class="'+(active==='sim'?'selected':'')+'">Position long / short</button><button data-route="backtest" class="'+(active==='back'?'selected':'')+'">Backtest & robustesse</button><button data-route="macro" class="'+(active==='macro'?'selected':'')+'">Scénarios macro</button><button data-route="candidats" class="'+(active==='cand'?'selected':'')+'">Mes candidats</button></div></div>'}
 function bindNav(){$$('[data-route]').forEach(b=>b.onclick=()=>location.hash=b.dataset.route)}
 function simulator(){
 $('#main').innerHTML=title('03 / LABORATOIRE','Le risque prend forme.','Définissez un scénario. Le dimensionnement inclut les frais, le glissement et, pour le short, un coût d’emprunt simplifié. Les unités fractionnaires servent uniquement à la pédagogie.')+'<section class="section" style="padding-top:0">'+labNav('sim')+'<div class="workspace"><form class="controls" id="simForm"><h3>Votre hypothèse</h3><label style="margin-bottom:18px">Direction<select id="side"><option value="long">Long — anticiper une hausse</option><option value="short">Short — anticiper une baisse</option></select></label><div class="form-grid">'+field('capital','Capital (€)',10000,1,1e9)+field('risk','Budget de risque (%)',1,.01,10,.01)+field('entry','Prix d’entrée (€)',100,.01,1e6,.01)+field('stop','Stop envisagé (€)',96,.01,1e6,.01)+field('target','Objectif (€)',112,.01,1e6,.01)+field('exit','Sortie du scénario (€)',108,.01,1e6,.01)+field('fee','Frais / côté (pb)',5,0,1000,.1)+field('slip','Glissement / côté (pb)',3,0,1000,.1)+field('leverage','Levier maximal (×)',1,1,20,1)+field('borrow','Emprunt short (% / an)',3,0,200,.1)+field('days','Durée (jours)',5,0,3650,1)+'</div><p class="hint">1 point de base (pb) = 0,01 %. Frais appliqués à l’entrée et à la sortie. Le levier plafonne l’exposition ; il ne crée pas un avantage statistique.</p><button class="btn" type="submit">Calculer le scénario ↗</button><p id="simError" class="error" role="alert"></p></form><div class="results"><div id="simMetrics"></div>'+art('simCanvas','POSITION / CARTE DES ISSUES','Le prix × la taille.','X · variation de prix −20 à +20 %<br>Y · taille 0 à 2×<br>Z · P&L net (€)','lab-art')+'<p class="hint">La surface montre le résultat de la position selon le prix de sortie et un multiplicateur de quantité. La zone au-delà de 1× peut dépasser votre budget ou votre plafond d’exposition. Rotation au clavier ou à la souris.</p><div id="simDetails"></div></div></div><div class="notice warn">Le stop est un niveau envisagé, pas une garantie de prix d’exécution. Un gap peut dépasser la perte calculée. Ce modèle linéaire n’intègre ni liquidation, ni appels de marge, ni frais de financement du long, ni disponibilité d’emprunt. Il ne décrit pas des options, des futures à multiplicateur ni tous les CFD. Un short action peut subir une perte théoriquement illimitée.</div><details><summary>Voir les formules et les hypothèses</summary><p>Quantité = minimum du budget de risque / perte unitaire au stop (coûts inclus) et du capital × levier / prix d’entrée. P&L brut = quantité × (sortie − entrée) pour un long ; le signe est inversé pour un short. P&L net = P&L brut − coûts d’exécution − emprunt short. Le risque au stop est calculé en supposant l’exécution à ce prix. Le capital est exprimé en euros et l’actif aussi : aucun change n’est simulé.</p></details></section>';
@@ -1118,7 +1175,7 @@ ctx.font='10px monospace';ctx.fillStyle='#b6cbbd';let xaxis=project(1.22,-1,-.55
 const pointerdown=e=>{down=true;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId)},pointermove=e=>{if(!down)return;yaw+=(e.clientX-lastX)*.007;pitch=Math.max(.15,Math.min(1.3,pitch+(e.clientY-lastY)*.005));lastX=e.clientX;lastY=e.clientY;draw()},pointerup=()=>down=false,key=e=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();if(e.key==='ArrowLeft')yaw-=.1;if(e.key==='ArrowRight')yaw+=.1;if(e.key==='ArrowUp')pitch=Math.min(1.3,pitch+.1);if(e.key==='ArrowDown')pitch=Math.max(.15,pitch-.1);draw()};
 canvas.addEventListener('pointerdown',pointerdown);canvas.addEventListener('pointermove',pointermove);canvas.addEventListener('pointerup',pointerup);canvas.addEventListener('pointercancel',pointerup);canvas.addEventListener('keydown',key);observer=new ResizeObserver(draw);observer.observe(canvas);draw();let dispose=()=>{observer.disconnect();canvas.removeEventListener('pointerdown',pointerdown);canvas.removeEventListener('pointermove',pointermove);canvas.removeEventListener('pointerup',pointerup);canvas.removeEventListener('pointercancel',pointerup);canvas.removeEventListener('keydown',key)};cleanups.push(dispose);return dispose}
 function lineChart(canvas,series,benchmark,dates){const ctx=canvas.getContext('2d');function draw(){let w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(devicePixelRatio||1,2);canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);let all=[...series,...benchmark],lo=Math.min(...all),hi=Math.max(...all),pad=(hi-lo)*.12||100;lo-=pad;hi+=pad;let left=58,right=15,top=20,bottom=30;const y=v=>top+(hi-v)/(hi-lo)*(h-top-bottom),x=i=>left+i/(series.length-1)*(w-left-right);ctx.font='10px monospace';for(let i=0;i<=4;i++){let v=lo+(hi-lo)*i/4;ctx.strokeStyle='#cbd2c4';ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(left,y(v));ctx.lineTo(w-right,y(v));ctx.stroke();ctx.fillStyle='#59665f';ctx.fillText(num(v,0),0,y(v)+4)}function plot(s,color,dashed){ctx.beginPath();s.forEach((v,i)=>i?ctx.lineTo(x(i),y(v)):ctx.moveTo(x(i),y(v)));ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash(dashed?[5,4]:[]);ctx.stroke()}plot(benchmark,'#8d7754',true);plot(series,'#2d715d',false);ctx.setLineDash([]);ctx.fillStyle='#59665f';ctx.fillText(dates[0],left,h-6);ctx.fillText(dates.at(-1),w-85,h-6)}let ro=new ResizeObserver(draw);ro.observe(canvas);draw();cleanups.push(()=>ro.disconnect())}
-function route(){cleanups.forEach(f=>f());cleanups=[];let hash=location.hash.slice(1)||'accueil';let routes={accueil:home,radar:()=>RadarPanel.render(),apprendre:library,strategies,laboratoire:simulator,backtest:backtestPage,macro:macroPage,defis:quizPage,sources:sourcesPage};(routes[hash]||home)();$$('nav a').forEach(a=>{let active=a.hash==='#'+hash||(a.hash==='#laboratoire'&&['backtest','macro'].includes(hash));a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});window.scrollTo(0,0)}
+function route(){cleanups.forEach(f=>f());cleanups=[];let hash=location.hash.slice(1)||'accueil';let routes={accueil:home,radar:()=>RadarPanel.render(),apprendre:library,strategies,laboratoire:simulator,backtest:backtestPage,macro:macroPage,defis:quizPage,sources:sourcesPage,candidats:()=>CandidatsPage.render()};(routes[hash]||home)();$$('nav a').forEach(a=>{let active=a.hash==='#'+hash||(a.hash==='#laboratoire'&&['backtest','macro','candidats'].includes(hash));a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});window.scrollTo(0,0)}
 $('#lessonDialog .close').onclick=()=>$('#lessonDialog').close();$('#lessonDialog').addEventListener('click',e=>{if(e.target===$('#lessonDialog')){let r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.target.close()}});
 window.addEventListener('hashchange',route);route();
 
