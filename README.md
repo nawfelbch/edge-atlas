@@ -26,7 +26,9 @@ Réglages choisis sur les 70 % anciens, mesurés sur les 30 % récents. Résulta
 dans `backtest/resultats/` (CSV + HTML, non envoyés sur GitHub).
 
 ## Recherche Forex : bénéfice supérieur au drawdown (sur ton PC)
-`node backtest/forex-recherche.mjs` (clé `TWELVE_DATA_API_KEY`) combine les
+`node backtest/forex-recherche.mjs` (clé `TWELVE_DATA_API_KEY` ; taux à 3 mois
+lus sur FRED, swap compté) ajoute le momentum 3/6/12 mois et le carry en mensuel,
+et une validation glissante sur 5 périodes. Il combine aussi les
 briques du site (tendance, ruptures, RSI, filtre SMA 200, filtre journalier,
 stop ATR fixe ou suiveur, objectif 3R, risque 0,5 % par position) sur 6 paires
 en D et H4. Chaque configuration est commune à toutes les paires, classée sur
