@@ -19,6 +19,7 @@
 //
 // Lancement : $env:TWELVE_DATA_API_KEY="..." ; node backtest/forex-recherche.mjs
 // Options    : --pairs=EUR/USD,GBP/USD  --frames=D,H4  --refresh (ignore le cache)
+//              --candidats (seulement les candidats de backtest/candidats.md)
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,6 +44,14 @@ const MIN_TRADES_VALIDATION = 20 // en dessous : résultat signalé « fragile �
 // Taux interbancaires à 3 mois (OCDE, publiés par FRED, mensuels, en %)
 const SERIES_TAUX = { USD: 'IR3TIB01USM156N', EUR: 'IR3TIB01EZM156N', GBP: 'IR3TIB01GBM156N', JPY: 'IR3TIB01JPM156N', AUD: 'IR3TIB01AUM156N', CAD: 'IR3TIB01CAM156N', CHF: 'IR3TIB01CHM156N', NZD: 'IR3TIB01NZM156N' }
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
+// Candidats retenus (backtest/candidats.md), testés tels quels avec --candidats
+const CANDIDATS = [
+  'H4 · rupture 55/20 · filtre D · stop 2 ATR suiveur',
+  'H4 · tendance 10/50 · filtre D · stop 2 ATR suiveur',
+  'H4 · retour RSI 25/75 · filtre sma200 · stop 2 ATR',
+  'M · carry si momentum 12 mois d’accord · vol. visée 10 %',
+]
+const MODE_CANDIDATS = process.argv.includes('--candidats')
 
 // ---------- Données ----------
 function cache(nom) {
@@ -348,7 +357,7 @@ async function main() {
     // Périodes glissantes communes (dates) après 201 bougies de préchauffage
     const t0 = Math.max(...paires.map((p) => prep[p].bars[201].t)), t1 = Math.min(...paires.map((p) => prep[p].bars.at(-1).t))
     const bornes = Array.from({ length: PERIODES + 1 }, (_, k) => t0 + (t1 - t0) * k / PERIODES)
-    for (const cfg of configurations(f)) {
+    for (const cfg of configurations(f).filter((c) => !MODE_CANDIDATS || CANDIDATS.includes(c.id))) {
       essais++
       const r = { cfg, recherche: {}, validation: {}, periodes: [], paires }
       for (const p of paires) {
@@ -394,6 +403,15 @@ async function main() {
     'paires > 0': r.paires.filter((p) => r.validation[p].rendement > 0).length + '/' + r.paires.length,
     'trades / révisions': r.tradesValidation + (r.tradesValidation < MIN_TRADES_VALIDATION ? ' (fragile)' : ''),
   })
+  if (MODE_CANDIDATS) {
+    // Candidats figés à l'avance : aucun choix, on regarde simplement s'ils tiennent
+    console.log('\nCANDIDATS TESTÉS TELS QUELS sur ' + PAIRES.join(', ') + ' — historique complet, puis 40 % récents')
+    console.table(resultats.map((r) => { const tout = portefeuille(r.paires.map((p) => enchainer([r.recherche[p].courbe, r.validation[p].courbe]).courbe)); return { candidat: r.cfg.id, 'complet bénéfice': pct(tout.rendement), 'complet DD': pct(tout.dd), 'complet bénéf./DD': nb(tout.ratio), 'récent bénéfice': pct(r.portValidation.rendement), 'récent DD': pct(r.portValidation.dd), 'récent bénéf./DD': nb(r.portValidation.ratio), 'paires > 0 (récent)': r.paires.filter((p) => r.validation[p].rendement > 0).length + '/' + r.paires.length, 'trades (récent)': r.tradesValidation + (r.tradesValidation < MIN_TRADES_VALIDATION ? ' (fragile)' : '') } }))
+    for (const r of resultats) { console.log('Détail récent · ' + r.cfg.id); console.table(r.paires.map((p) => ({ paire: p, bénéfice: pct(r.validation[p].rendement), drawdown: pct(r.validation[p].dd), 'bénéf./DD': nb(r.validation[p].ratio), trades: r.validation[p].trades, swap: pct(r.validation[p].swap) }))) }
+    console.log('\nLECTURE : un candidat tient s’il garde bénéfice > drawdown sur ces paires jamais utilisées pour choisir, sur l’historique complet ET sur la période récente, avec au moins ' + MIN_TRADES_VALIDATION + ' transactions.')
+    if (erreurs.length) console.log('\nNON TESTÉ OU PARTIEL\n- ' + erreurs.join('\n- '))
+    return
+  }
   console.log('\n' + essais + ' configurations essayées (' + classes.length + ' avec au moins ' + MIN_TRADES_RECHERCHE + ' transactions en recherche).')
   console.log('1) LES 10 MEILLEURES SUR LA RECHERCHE (60 % anciens), JUGÉES SUR LA VALIDATION (40 % récents)')
   console.table(top.map(ligne))
