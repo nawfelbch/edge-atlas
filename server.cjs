@@ -2,7 +2,7 @@
 const http=require('http'),fs=require('fs'),path=require('path');
 const root=path.resolve(__dirname,'dist'),port=4173;
 const frames=new Set(['1M','1w','1d','4h','1h','15m','5m','1m','1month','1week','1day','15min','5min','1min']);
-const series=new Set(['VIXCLS','BAMLH0A0HYM2','T10Y2Y']);
+const series=new Set(['VIXCLS','BAMLH0A0HYM2','T10Y2Y','IR3TIB01USM156N','IR3TIB01EZM156N','IR3TIB01GBM156N','IR3TIB01JPM156N','IR3TIB01AUM156N','IR3TIB01CAM156N','IR3TIB01CHM156N','IR3TIB01NZM156N']);
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'};
 const send=(res,status,data,type='application/json; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'});res.end(typeof data==='string'?data:JSON.stringify(data))};
 const server=http.createServer(async(req,res)=>{

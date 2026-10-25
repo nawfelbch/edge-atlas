@@ -1,6 +1,6 @@
-// Relais en lecture seule vers FRED, limité aux trois séries du radar
-// (même liste blanche que server.cjs).
-const series = new Set(['VIXCLS', 'BAMLH0A0HYM2', 'T10Y2Y'])
+// Relais en lecture seule vers FRED, limité aux séries du radar et aux taux à
+// 3 mois du « Carry du jour » (même liste blanche que server.cjs).
+const series = new Set(['VIXCLS', 'BAMLH0A0HYM2', 'T10Y2Y', 'IR3TIB01USM156N', 'IR3TIB01EZM156N', 'IR3TIB01GBM156N', 'IR3TIB01JPM156N', 'IR3TIB01AUM156N', 'IR3TIB01CAM156N', 'IR3TIB01CHM156N', 'IR3TIB01NZM156N'])
 
 const reponse = (status, corps, type = 'application/json; charset=utf-8') =>
   new Response(typeof corps === 'string' ? corps : JSON.stringify(corps), {
