@@ -24,3 +24,11 @@ Voir `LIRE-MOI.txt` pour le détail et les limites.
 `dist/engine.js`) sur W, D, H4, H1, M15, plus un filtre de tendance journalière.
 Réglages choisis sur les 70 % anciens, mesurés sur les 30 % récents. Résultats
 dans `backtest/resultats/` (CSV + HTML, non envoyés sur GitHub).
+
+## Recherche Forex : bénéfice supérieur au drawdown (sur ton PC)
+`node backtest/forex-recherche.mjs` (clé `TWELVE_DATA_API_KEY`) combine les
+briques du site (tendance, ruptures, RSI, filtre SMA 200, filtre journalier,
+stop ATR fixe ou suiveur, objectif 3R, risque 0,5 % par position) sur 6 paires
+en D et H4. Chaque configuration est commune à toutes les paires, classée sur
+les 60 % anciens et jugée sur les 40 % récents. Données en cache 12 h dans
+`backtest/cache/`, résultats dans `backtest/resultats/` (non envoyés sur GitHub).
