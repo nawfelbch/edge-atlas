@@ -34,3 +34,16 @@ stop ATR fixe ou suiveur, objectif 3R, risque 0,5 % par position) sur 6 paires
 en D et H4. Chaque configuration est commune à toutes les paires, classée sur
 les 60 % anciens et jugée sur les 40 % récents. Données en cache 12 h dans
 `backtest/cache/`, résultats dans `backtest/resultats/` (non envoyés sur GitHub).
+
+## Agents H1 (portefeuille fictif, en ligne)
+`netlify/functions/agents-h1.mjs` tourne à la minute 3 de chaque heure (UTC) :
+cours H1 et D de EUR/USD, XAU/USD et BTC/USD (Twelve Data), VIX et écart de
+crédit (FRED), communiqués de la Fed. Quatre agents votent (Tendance, Momentum,
+Macro, Volatilité) sous le contrôle d'un agent Risque ; le comité ouvre une
+position **fictive** seulement s'ils sont d'accord. Tout est enregistré dans une
+base Supabase dédiée (`supabase/001_agents_h1.sql`), lisible dans
+Laboratoire > Agents H1. **Aucun ordre réel, aucun courtier.**
+
+Variables Netlify : `TWELVE_DATA_API_KEY`, `EDGE_ATLAS_PASSWORD`,
+`EDGE_SUPABASE_URL`, `EDGE_SUPABASE_SECRET_KEY` (clé secrète du projet dédié).
+Tests : `node --test tests/*.test.mjs`.

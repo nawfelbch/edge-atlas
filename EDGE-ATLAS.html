@@ -1467,6 +1467,94 @@ function render() {
 }
 root.CarryPage = { render }
 })(typeof globalThis !== 'undefined' ? globalThis : this);
+;
+// Laboratoire > Agents H1 : lecture du journal tenu chaque heure par la tâche
+// Netlify agents-h1 (votes des agents, positions FICTIVES, bilan par niveau
+// d'accord). Lecture seule : cette page ne déclenche rien.
+(function (root) {
+'use strict';
+const etat = { cle: '', donnees: null, erreur: '', busy: false }
+const NOMS = { tendance: 'Tendance', momentum: 'Momentum', macro: 'Macro', volatilite: 'Volatilité', risque: 'Risque', comite: 'Comité' }
+const enLigne = () => location.protocol === 'https:' && !['127.0.0.1', 'localhost'].includes(location.hostname)
+const date = (t) => t ? new Date(t).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', dateStyle: 'short', timeStyle: 'short' }) : '—'
+const sens = (v) => v > 0 ? '▲ Achat' : v < 0 ? '▼ Vente' : '—'
+const nombre = (x, d = 2) => x == null ? '—' : Number(x).toLocaleString('fr-FR', { maximumFractionDigits: d })
+const prix = (x) => nombre(x, Number(x) < 10 ? 5 : 2)
+
+async function charger() {
+  if (etat.busy) return
+  etat.busy = true; etat.erreur = ''; dessiner()
+  try {
+    const r = await fetch('/.netlify/functions/agents-journal', { headers: { 'X-Edge-Pass': etat.cle }, signal: AbortSignal.timeout(20000) })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw Error(j.error || 'HTTP ' + r.status)
+    etat.donnees = j
+  } catch (e) {
+    etat.erreur = e.message
+  } finally {
+    etat.busy = false; dessiner()
+  }
+}
+
+function groupe(titre, g) {
+  return [titre, g.n ? g.n + (g.n > 1 ? ' positions · ' : ' position · ') + Math.round(g.taux * 100) + ' % gagnantes · ' + (g.totalR >= 0 ? '+' : '') + nombre(g.totalR) + ' R' : 'Aucune position fermée']
+}
+
+function dessiner() {
+  const out = $('#agentsOut')
+  if (!out) return
+  if (etat.busy) { out.innerHTML = '<p class="hint">Chargement du journal…</p>'; return }
+  if (etat.erreur) { out.innerHTML = '<div class="notice warn">' + esc(etat.erreur) + '</div>'; return }
+  const d = etat.donnees
+  if (!d) { out.innerHTML = '<p class="hint">Saisissez le mot de passe du site puis chargez le journal.</p>'; return }
+  const b = d.bilan, ouvertes = d.trades.filter((t) => t.statut === 'ouverte'), fermees = d.trades.filter((t) => t.statut === 'fermee')
+  const dernier = d.runs[0]
+  let html = metrics([
+    ['Capital fictif', nombre(10000 + b.global.pnl, 0) + ' (départ 10 000)'],
+    groupe('Bilan global', b.global),
+    groupe('Accord 3 agents', b.accord3),
+    groupe('Accord 2 agents', b.accord2),
+  ])
+  html += '<p class="hint">Un résultat ne devient lisible qu’après plusieurs dizaines de positions fermées. Tant que ce nombre est faible, aucun niveau d’accord n’est « fiable ».</p>'
+  if (!dernier) return void (out.innerHTML = html + '<p class="hint">Aucune exécution enregistrée : la tâche tourne à la minute 3 de chaque heure.</p>')
+
+  html += '<h3>Dernière heure : ' + esc(date(dernier.heure)) + '</h3><p>Contexte macro : <b>' + esc(dernier.macro?.regime || 'inconnu') + '</b> · ' + esc((dernier.macro?.raisons || []).join(' · ')) + '</p>'
+  if (dernier.erreurs?.length) html += '<div class="notice warn">Sources indisponibles : ' + esc(dernier.erreurs.join(' ; ')) + '</div>'
+  const actifs = [...new Set(dernier.agent_votes.map((v) => v.actif))]
+  html += '<div class="table-wrap"><table><thead><tr><th>Agent</th>' + actifs.map((a) => '<th>' + esc(a) + '</th>').join('') + '</tr></thead><tbody>' +
+    Object.keys(NOMS).map((agent) => '<tr><td><b>' + NOMS[agent] + '</b></td>' + actifs.map((a) => {
+      const v = dernier.agent_votes.find((x) => x.actif === a && x.agent === agent)
+      if (!v) return '<td>—</td>'
+      return '<td><b>' + (v.veto ? '⛔ Veto' : sens(v.vote)) + '</b><br><small>' + esc((v.raisons || []).join(' · ')) + '</small></td>'
+    }).join('') + '</tr>').join('') + '</tbody></table></div>'
+
+  const ligne = (t) => '<tr><td>' + esc(t.actif) + '</td><td>' + sens(t.sens) + '</td><td>' + t.accord + '/3</td><td>' + esc(date(t.ouverte_le)) + '</td><td>' + prix(t.entree) + '</td><td>' + prix(t.stop) + ' / ' + prix(t.cible) + '</td><td>' +
+    (t.statut === 'fermee' ? esc(t.raison_sortie) + ' · ' + prix(t.sortie) + '<br><small>' + esc(date(t.fermee_le)) + '</small>' : 'En cours') + '</td><td>' + (t.r == null ? '—' : (t.r >= 0 ? '+' : '') + nombre(t.r) + ' R') + '</td></tr>'
+  const tableau = (liste) => '<div class="table-wrap"><table><thead><tr><th>Actif</th><th>Sens</th><th>Accord</th><th>Ouverture</th><th>Entrée</th><th>Stop / objectif</th><th>Sortie</th><th>Résultat</th></tr></thead><tbody>' + liste.map(ligne).join('') + '</tbody></table></div>'
+  html += '<h3>Positions fictives ouvertes (' + ouvertes.length + ')</h3>' + (ouvertes.length ? tableau(ouvertes) : '<p class="hint">Aucune.</p>')
+  html += '<h3>Dernières positions fermées</h3>' + (fermees.length ? tableau(fermees.slice(0, 30)) : '<p class="hint">Aucune pour l’instant.</p>')
+  html += '<h3>Historique des heures</h3><div class="table-wrap"><table><thead><tr><th>Heure</th><th>Régime</th><th>Décisions</th></tr></thead><tbody>' +
+    d.runs.map((r) => '<tr><td>' + esc(date(r.heure)) + '</td><td>' + esc(r.macro?.regime || '—') + '</td><td>' + esc(r.resume || 'Exécution incomplète') + (r.erreurs?.length ? ' <small>(' + r.erreurs.length + ' source(s) en erreur)</small>' : '') + '</td></tr>').join('') + '</tbody></table></div>'
+  out.innerHTML = html
+}
+
+function render() {
+  try { etat.cle = etat.cle || localStorage.getItem('edgeAtlasPass') || '' } catch { /* stockage indisponible */ }
+  $('#main').innerHTML = title('03 / LABORATOIRE', 'Agents H1.', 'Chaque heure, quatre agents lisent la même photo du marché et votent. Un comité n’ouvre une position fictive que s’ils sont d’accord. Un outil de mesure : aucun ordre, aucune garantie.') +
+    '<section class="section" style="padding-top:0">' + labNav('agents') +
+    '<div class="notice warn"><b>Portefeuille fictif uniquement.</b> Aucun courtier n’est connecté. Le journal sert à mesurer, sur plusieurs mois, si l’accord des agents améliore réellement les résultats. Les seuils sont éditoriaux, non optimisés. Entrée au cours de clôture de l’heure du signal, frais estimés (EUR/USD 1 pb, or 3 pb, bitcoin 10 pb par côté).</div>' +
+    '<div class="workspace"><form class="controls" id="agentsForm"><h3>Journal</h3><label>Mot de passe EDGE ATLAS<input id="agentsKey" type="password" autocomplete="off" value="' + esc(etat.cle) + '"></label><button class="btn" type="submit">Charger le journal ↻</button>' +
+    '<h3>Les agents</h3><p class="hint"><b>Tendance</b> : prix et EMA20 face à l’EMA50 en H1, confirmés par l’EMA50 journalière. <b>Momentum</b> : rupture des 20 dernières heures, sauf RSI extrême. <b>Macro</b> : VIX et écart de crédit (FRED) → régime refuge, appétit pour le risque ou neutre. <b>Volatilité</b> : veto si l’ATR dépasse 2,5 × sa médiane. <b>Risque</b> : veto si marché fermé, position déjà ouverte, 3 positions, −2 % dans la journée ou Fed il y a moins de 2 h.</p>' +
+    '<h3>Comité</h3><p class="hint">Ouverture si Tendance et Momentum sont d’accord, si Macro ne s’y oppose pas et sans veto. Stop 1,5 ATR, objectif 3 ATR (2R), 0,5 % du capital risqué, sortie après 48 h.</p></form><div class="results" id="agentsOut"></div></div></section>'
+  bindNav()
+  $('#agentsForm').onsubmit = (e) => { e.preventDefault(); charger() }
+  $('#agentsKey').oninput = () => { etat.cle = $('#agentsKey').value; try { localStorage.setItem('edgeAtlasPass', etat.cle) } catch { /* stockage indisponible */ } }
+  if (!enLigne()) { $('#agentsOut').innerHTML = '<div class="notice">Le journal des agents se lit sur le site en ligne : la tâche horaire et la base tournent sur Netlify.</div>'; return }
+  dessiner()
+  if (etat.cle && !etat.donnees) charger()
+}
+root.AgentsPage = { render }
+})(typeof globalThis !== 'undefined' ? globalThis : this);
 
 'use strict';
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)], E=Engine;
@@ -1502,7 +1590,7 @@ function lesson(id,refresh){let l=CONTENT.lessons.find(x=>x.id===id);$('#lessonC
 function strategies(){
 $('#main').innerHTML=title('02 / HYPOTHÈSES DE RECHERCHE','L’avantage se démontre.','Des approches connues et des pistes plus spécialisées. Leur potentiel dépend du régime, de l’exécution, des coûts et de la capacité à les tester honnêtement.')+'<section class="section" style="padding-top:0"><div class="notice warn">Aucune de ces fiches n’est un signal d’achat ou de vente. Les travaux historiques documentent des phénomènes sur certains marchés et certaines périodes ; ils ne garantissent pas qu’une variante exploitable reste rentable aujourd’hui.</div>'+CONTENT.strategies.map((s,i)=>'<article class="strategy"><div><span class="tag">'+String(i+1).padStart(2,'0')+' / '+esc(s.level)+'</span><h3>'+esc(s.title)+'</h3>'+srcLinks(s.sourceIds)+'</div><dl><dt>Mécanisme</dt><dd>'+esc(s.idea)+'</dd><dt>Protocole</dt><dd>'+esc(s.rules)+'</dd><dt>Échec possible</dt><dd>'+esc(s.failure)+'</dd><dt>À vérifier</dt><dd>'+esc(s.validation)+'</dd></dl></article>').join('')+'<div class="ribbon"><div><h3>Testez une règle, pas un récit.</h3><p>Le laboratoire propose deux règles simples de moyennes mobiles pour apprendre les biais. Les stratégies de cette bibliothèque ne sont pas toutes implémentées.</p></div><a class="btn" href="#backtest">Ouvrir le backtest ↗</a></div></section>'}
 function field(id,label,value,min,max,step=1){return '<label>'+label+'<input id="'+id+'" type="number" value="'+value+'" min="'+min+'" '+(max!==null?'max="'+max+'"':'')+' step="'+step+'" required></label>'}
-function labNav(active){return '<div class="toolbar"><div class="segmented"><button data-route="laboratoire" class="'+(active==='sim'?'selected':'')+'">Position long / short</button><button data-route="backtest" class="'+(active==='back'?'selected':'')+'">Backtest & robustesse</button><button data-route="macro" class="'+(active==='macro'?'selected':'')+'">Scénarios macro</button><button data-route="candidats" class="'+(active==='cand'?'selected':'')+'">Mes candidats</button><button data-route="carry" class="'+(active==='carry'?'selected':'')+'">Carry du jour</button></div></div>'}
+function labNav(active){return '<div class="toolbar"><div class="segmented"><button data-route="laboratoire" class="'+(active==='sim'?'selected':'')+'">Position long / short</button><button data-route="backtest" class="'+(active==='back'?'selected':'')+'">Backtest & robustesse</button><button data-route="macro" class="'+(active==='macro'?'selected':'')+'">Scénarios macro</button><button data-route="candidats" class="'+(active==='cand'?'selected':'')+'">Mes candidats</button><button data-route="carry" class="'+(active==='carry'?'selected':'')+'">Carry du jour</button><button data-route="agents" class="'+(active==='agents'?'selected':'')+'">Agents H1</button></div></div>'}
 function bindNav(){$$('[data-route]').forEach(b=>b.onclick=()=>location.hash=b.dataset.route)}
 function simulator(){
 $('#main').innerHTML=title('03 / LABORATOIRE','Le risque prend forme.','Définissez un scénario. Le dimensionnement inclut les frais, le glissement et, pour le short, un coût d’emprunt simplifié. Les unités fractionnaires servent uniquement à la pédagogie.')+'<section class="section" style="padding-top:0">'+labNav('sim')+'<div class="workspace"><form class="controls" id="simForm"><h3>Votre hypothèse</h3><label style="margin-bottom:18px">Direction<select id="side"><option value="long">Long — anticiper une hausse</option><option value="short">Short — anticiper une baisse</option></select></label><div class="form-grid">'+field('capital','Capital (€)',10000,1,1e9)+field('risk','Budget de risque (%)',1,.01,10,.01)+field('entry','Prix d’entrée (€)',100,.01,1e6,.01)+field('stop','Stop envisagé (€)',96,.01,1e6,.01)+field('target','Objectif (€)',112,.01,1e6,.01)+field('exit','Sortie du scénario (€)',108,.01,1e6,.01)+field('fee','Frais / côté (pb)',5,0,1000,.1)+field('slip','Glissement / côté (pb)',3,0,1000,.1)+field('leverage','Levier maximal (×)',1,1,20,1)+field('borrow','Emprunt short (% / an)',3,0,200,.1)+field('days','Durée (jours)',5,0,3650,1)+'</div><p class="hint">1 point de base (pb) = 0,01 %. Frais appliqués à l’entrée et à la sortie. Le levier plafonne l’exposition ; il ne crée pas un avantage statistique.</p><button class="btn" type="submit">Calculer le scénario ↗</button><p id="simError" class="error" role="alert"></p></form><div class="results"><div id="simMetrics"></div>'+art('simCanvas','POSITION / CARTE DES ISSUES','Le prix × la taille.','X · variation de prix −20 à +20 %<br>Y · taille 0 à 2×<br>Z · P&L net (€)','lab-art')+'<p class="hint">La surface montre le résultat de la position selon le prix de sortie et un multiplicateur de quantité. La zone au-delà de 1× peut dépasser votre budget ou votre plafond d’exposition. Rotation au clavier ou à la souris.</p><div id="simDetails"></div></div></div><div class="notice warn">Le stop est un niveau envisagé, pas une garantie de prix d’exécution. Un gap peut dépasser la perte calculée. Ce modèle linéaire n’intègre ni liquidation, ni appels de marge, ni frais de financement du long, ni disponibilité d’emprunt. Il ne décrit pas des options, des futures à multiplicateur ni tous les CFD. Un short action peut subir une perte théoriquement illimitée.</div><details><summary>Voir les formules et les hypothèses</summary><p>Quantité = minimum du budget de risque / perte unitaire au stop (coûts inclus) et du capital × levier / prix d’entrée. P&L brut = quantité × (sortie − entrée) pour un long ; le signe est inversé pour un short. P&L net = P&L brut − coûts d’exécution − emprunt short. Le risque au stop est calculé en supposant l’exécution à ce prix. Le capital est exprimé en euros et l’actif aussi : aucun change n’est simulé.</p></details></section>';
@@ -1548,7 +1636,7 @@ ctx.font='10px monospace';ctx.fillStyle='#b6cbbd';let xaxis=project(1.22,-1,-.55
 const pointerdown=e=>{down=true;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId)},pointermove=e=>{if(!down)return;yaw+=(e.clientX-lastX)*.007;pitch=Math.max(.15,Math.min(1.3,pitch+(e.clientY-lastY)*.005));lastX=e.clientX;lastY=e.clientY;draw()},pointerup=()=>down=false,key=e=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();if(e.key==='ArrowLeft')yaw-=.1;if(e.key==='ArrowRight')yaw+=.1;if(e.key==='ArrowUp')pitch=Math.min(1.3,pitch+.1);if(e.key==='ArrowDown')pitch=Math.max(.15,pitch-.1);draw()};
 canvas.addEventListener('pointerdown',pointerdown);canvas.addEventListener('pointermove',pointermove);canvas.addEventListener('pointerup',pointerup);canvas.addEventListener('pointercancel',pointerup);canvas.addEventListener('keydown',key);observer=new ResizeObserver(draw);observer.observe(canvas);draw();let dispose=()=>{observer.disconnect();canvas.removeEventListener('pointerdown',pointerdown);canvas.removeEventListener('pointermove',pointermove);canvas.removeEventListener('pointerup',pointerup);canvas.removeEventListener('pointercancel',pointerup);canvas.removeEventListener('keydown',key)};cleanups.push(dispose);return dispose}
 function lineChart(canvas,series,benchmark,dates){const ctx=canvas.getContext('2d');function draw(){let w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(devicePixelRatio||1,2);canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);let all=[...series,...benchmark],lo=Math.min(...all),hi=Math.max(...all),pad=(hi-lo)*.12||100;lo-=pad;hi+=pad;let left=58,right=15,top=20,bottom=30;const y=v=>top+(hi-v)/(hi-lo)*(h-top-bottom),x=i=>left+i/(series.length-1)*(w-left-right);ctx.font='10px monospace';for(let i=0;i<=4;i++){let v=lo+(hi-lo)*i/4;ctx.strokeStyle='#cbd2c4';ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(left,y(v));ctx.lineTo(w-right,y(v));ctx.stroke();ctx.fillStyle='#59665f';ctx.fillText(num(v,0),0,y(v)+4)}function plot(s,color,dashed){ctx.beginPath();s.forEach((v,i)=>i?ctx.lineTo(x(i),y(v)):ctx.moveTo(x(i),y(v)));ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash(dashed?[5,4]:[]);ctx.stroke()}plot(benchmark,'#8d7754',true);plot(series,'#2d715d',false);ctx.setLineDash([]);ctx.fillStyle='#59665f';ctx.fillText(dates[0],left,h-6);ctx.fillText(dates.at(-1),w-85,h-6)}let ro=new ResizeObserver(draw);ro.observe(canvas);draw();cleanups.push(()=>ro.disconnect())}
-function route(){cleanups.forEach(f=>f());cleanups=[];let hash=location.hash.slice(1)||'accueil';let routes={accueil:home,radar:()=>RadarPanel.render(),apprendre:library,strategies,laboratoire:simulator,backtest:backtestPage,macro:macroPage,defis:quizPage,sources:sourcesPage,candidats:()=>CandidatsPage.render(),carry:()=>CarryPage.render()};(routes[hash]||home)();$$('nav a').forEach(a=>{let active=a.hash==='#'+hash||(a.hash==='#laboratoire'&&['backtest','macro','candidats','carry'].includes(hash));a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});window.scrollTo(0,0)}
+function route(){cleanups.forEach(f=>f());cleanups=[];let hash=location.hash.slice(1)||'accueil';let routes={accueil:home,radar:()=>RadarPanel.render(),apprendre:library,strategies,laboratoire:simulator,backtest:backtestPage,macro:macroPage,defis:quizPage,sources:sourcesPage,candidats:()=>CandidatsPage.render(),carry:()=>CarryPage.render(),agents:()=>AgentsPage.render()};(routes[hash]||home)();$$('nav a').forEach(a=>{let active=a.hash==='#'+hash||(a.hash==='#laboratoire'&&['backtest','macro','candidats','carry','agents'].includes(hash));a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')});window.scrollTo(0,0)}
 $('#lessonDialog .close').onclick=()=>$('#lessonDialog').close();$('#lessonDialog').addEventListener('click',e=>{if(e.target===$('#lessonDialog')){let r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.target.close()}});
 window.addEventListener('hashchange',route);route();
 
