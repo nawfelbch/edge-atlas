@@ -942,10 +942,235 @@ $('#rTemplate').onclick=()=>{let rows=R.demo(state.frame,42,100);download('model
 }
 function localBridge(){return location.protocol.startsWith('http')&&['127.0.0.1','localhost'].includes(location.hostname)&&location.port==='4173'}
 function method(){return '<div class="readable"><h3>Ce qui est calculé</h3><p>EMA20 et EMA50 : lissage exponentiel de coefficient 2/(n+1), initialisé au premier cours. RSI14 : première valeur après 14 variations, puis lissage de Wilder ; ATR14 : moyenne initiale de 14 True Ranges, puis lissage de Wilder. Les 60 premières bougies constituent une chauffe minimale, pas une convergence parfaite. Les plus hauts/bas de rupture excluent la bougie en cours d’analyse. Le score de pression est la somme des points des six conditions affichées. Ses poids et seuils sont éditoriaux et non optimisés ; aucun score n’est une probabilité. Plusieurs conditions réagissent à un mouvement déjà engagé. Leur capacité à précéder un autre mouvement doit être évaluée. Les données macro ne sont pas intégrées à ce score technique : elles éclairent séparément le contexte.</p><h3>Les huit horizons</h3><p>MN : régime et grandes fragilités. W : structure. D : scénario tactique. H4/H1 : évolution du scénario. M15/M5 : configuration. M1 : observation d’exécution. Les bougies courtes n’apportent pas automatiquement une meilleure précision prédictive. Les fenêtres représentent des nombres de bougies, donc des durées très différentes selon l’unité.</p><h3>Connexion des données</h3><p>Crypto : accès public Binance spot, sous réserve de disponibilité. Actions, ETF, Forex et indices autorisés : clé personnelle Twelve Data. L’accès temps réel, l’historique et les marchés dépendent de votre abonnement ; aucun abonnement n’est souscrit par ce site. La clé n’est pas enregistrée dans le stockage local et n’est pas exportée. Elle est transmise uniquement au fournisseur, directement ou via le serveur local fourni.</p><p>Le fichier HTML peut être ouvert directement. Si des requêtes sont bloquées par le navigateur, extrayez le dossier personnel fourni et lancez DEMARRER.cmd. Il nécessite Node.js et écoute uniquement sur 127.0.0.1:4173. Les endpoints locaux lisent des sources prédéfinies, sans accès à un courtier. Ne publiez pas le serveur local sur internet.</p><h3>Qualité et fraîcheur</h3><p>Seules les bougies clôturées sont utilisées. Binance fournit la fin de chaque bougie. Twelve Data : la plus récente est systématiquement exclue ; la suivante sert de borne supérieure à la précédente. Pour D/W/MN, les dates de séance restent celles du marché, sans reconstruction du calendrier de cotation. Le CSV doit indiquer des heures ISO avec fuseau ; end_time est recommandé pour les horaires de séance. Les trous, volumes atypiques, splits et dividendes ne sont pas corrigés automatiquement.</p><h3>Automatisation réelle de cette version</h3><p>Actualisation et détection de changements pendant que le radar est ouvert et visible. La surveillance s’arrête en quittant ce panneau ou en fermant le navigateur ; la mise en veille de l’ordinateur la suspend également. Les alertes restent dans la page ; aucune notification téléphone, aucun envoi d’email et aucun passage d’ordre ne sont connectés.</p><h3>Évaluation et journal</h3><p>Les derniers 30 % sont examinés par pas de H bougies. À chaque point, les indicateurs utilisent uniquement le passé. La fréquence d’atteinte de la cible est comparée à celle de tous les points de référence. L’intervalle de Wilson suppose une indépendance approximative qui peut être fausse sur les marchés. Une mesure crédible nécessite un historique plus long, des périodes inédites et des tests par régime. Le journal ne permet pas de réécrire les entrées depuis l’interface ; effacer les données du navigateur les supprime.</p><h3>Documentation des sources</h3><p><a class="text-link" href="https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints" target="_blank" rel="noopener">Binance : bougies ↗</a> · <a class="text-link" href="https://twelvedata.com/docs" target="_blank" rel="noopener">Twelve Data : API ↗</a> · <a class="text-link" href="https://support.twelvedata.com/en/articles/5745849-timezones" target="_blank" rel="noopener">Fuseaux ↗</a> · <a class="text-link" href="https://fred.stlouisfed.org" target="_blank" rel="noopener">FRED ↗</a></p><p>Utilisation personnelle. Les fournisseurs conservent leurs droits sur les données. Les fichiers importés et les exemples ne constituent pas une validation de qualité.</p></div>'}
-window.RadarPanel={render,daily:()=>{let c=get('D');return c&&!c.synthetic&&c.bars&&c.bars.length?{symbol:state.symbol,source:c.source,loadedAt:c.loadedAt,bars:c.bars,fx:fxLike(state.symbol)}:null}};
+function minuteBars(){
+  const record=get('M1');
+  if(!record||record.synthetic||!['binance','twelve'].includes(state.provider))return null;
+  return {symbol:state.symbol,source:record.source,bars:record.bars};
+}
+window.RadarPanel={render,minuteBars,daily:()=>{let c=get('D');return c&&!c.synthetic&&c.bars&&c.bars.length?{symbol:state.symbol,source:c.source,loadedAt:c.loadedAt,bars:c.bars,fx:fxLike(state.symbol)}:null}};
 })();
 
 ;
+(function (root) {
+  'use strict';
+
+  const minute = 60000;
+  const marketEvents = /inflation|\bcpi\b|\bpce\b|payroll|unemployment|jobless|fed interest rate|interest rate decision|\bgdp\b|retail sales|\bppi\b|\bpmi\b/i;
+
+  function createJournal(surprise) {
+    const events = new Map();
+
+    function ingestCalendar(rows, observedAt) {
+      for (const row of rows) {
+        if (row.country !== 'United States' || !marketEvents.test(row.event)) continue;
+        const id = JSON.stringify(['calendar', row.country, row.event, row.reference, row.date]);
+        const previous = events.get(id);
+        const published = Boolean(row.actual);
+        const canCaptureConsensus = !published && !row.estimated && row.forecast && observedAt < row.date;
+        const canUpdateConsensus = canCaptureConsensus && (!previous || observedAt >= previous.observedAt);
+        const consensus = canUpdateConsensus ? row.forecast : previous?.consensus ?? '';
+        const actual = published ? row.actual : previous?.actual ?? '';
+        const effectiveAt = published ? previous?.effectiveAt ?? observedAt : previous?.effectiveAt ?? null;
+
+        events.set(id, {
+          id, kind: 'calendar', title: row.event, date: row.date, reference: row.reference,
+          source: 'Trading Economics', url: row.url, actual, consensus,
+          reportedConsensus: row.forecast,
+          delta: surprise(actual, consensus),
+          indicativeDelta: surprise(actual, row.forecast),
+          estimated: row.estimated, effectiveAt, observedAt, updated: row.updated,
+          revised: Boolean(previous?.revised || (published && previous?.actual && row.actual !== previous.actual)),
+        });
+      }
+    }
+
+    function ingestFed(rows, observedAt) {
+      for (const row of rows) {
+        if (!Number.isFinite(row.date)) continue;
+        const id = JSON.stringify(['fed', row.url]);
+        events.set(id, {
+          id, kind: 'fed', title: row.title, date: row.date, url: row.url,
+          source: 'Réserve fédérale', observedAt: events.get(id)?.observedAt ?? observedAt,
+        });
+      }
+    }
+
+    return {
+      ingestCalendar,
+      ingestFed,
+      list: () => [...events.values()].sort((a, b) => b.date - a.date),
+    };
+  }
+
+  function replay(bars, options) {
+    const { effectiveAt, side, minutes, feeBps } = options;
+    if (!Number.isFinite(effectiveAt) || ![1, -1].includes(side) ||
+        !Number.isInteger(minutes) || minutes < 2 || minutes > 30 ||
+        !Number.isFinite(feeBps) || feeBps < 0 || feeBps > 500) {
+      throw Error('Paramètres de simulation invalides.');
+    }
+
+    const firstOpen = Math.ceil(effectiveAt / minute) * minute;
+    const start = bars.findIndex(bar => bar.t === firstOpen);
+    const window = start < 0 ? [] : bars.slice(start, start + minutes);
+    if (window.length !== minutes || window.some((bar, index) =>
+      bar.t !== firstOpen + index * minute ||
+      ![bar.open, bar.close].every(price => Number.isFinite(price) && price > 0)
+    )) {
+      throw Error('Historique M1 incomplet autour du signal. Rechargez les bougies clôturées dans Mon radar.');
+    }
+
+    const exit = window.at(-1).close;
+    const confirmed = side * (window[0].close - window[0].open) > 0;
+    function execute(entry) {
+      const gross = side * (exit / entry.open - 1);
+      const costs = (feeBps / 10000) * (1 + exit / entry.open);
+      return { entry: entry.open, exit, net: gross - costs, time: entry.t };
+    }
+
+    return { baseline: execute(window[0]), confirmed: confirmed ? execute(window[1]) : null };
+  }
+
+  let sessionJournal;
+  let selected = null;
+
+  function mount(host, refresh) {
+    const journal = sessionJournal ??= createJournal(MacroDesk.surprise);
+    const demoTime = Math.floor(Date.now() / minute) * minute - 60 * minute;
+    const demoBars = Array.from({ length: 30 }, (_, index) => ({
+      t: demoTime + index * minute,
+      open: 100 - index * 0.1,
+      close: 100 - (index + 1) * 0.1,
+    }));
+    const stamp = value => value == null ? '—' : new Date(value).toLocaleString('fr-FR', {
+      timeZone: 'Europe/Paris', dateStyle: 'short', timeStyle: 'short',
+    });
+    const q = selector => host.querySelector(selector);
+
+    host.innerHTML = `
+      <section class="card">
+        <h3>Signaux macro américains</h3>
+        <p>Les publications de la Fed et du calendrier sont chargées en parallèle.
+          Le journal regroupe les doublons et relève les écarts publiés. Il reste disponible tant que le site reste ouvert dans cet onglet.</p>
+        <button class="btn" type="button" id="signalsRefresh">Actualiser les sources</button>
+        <p class="hint">Ajoutez votre clé dans le calendrier ci-dessous pour recevoir ses chiffres.
+          Un consensus est figé s’il a été capté avant la publication pendant cette session.</p>
+        <div id="signalsList"></div>
+        <details id="signalsReplay">
+          <summary>Comparer deux règles sur les bougies M1</summary>
+          <p id="signalsSelection">Choisissez un signal exploitable ou lancez la démo.</p>
+          <div class="form-grid">
+            <label>Sens testé
+              <select id="signalsSide"><option value="-1">Short</option><option value="1">Long</option></select>
+            </label>
+            <label>Horizon (minutes)
+              <input id="signalsMinutes" type="number" min="2" max="30" step="1" value="5">
+            </label>
+            <label>Frais et glissement par côté (pb)
+              <input id="signalsCosts" type="number" min="0" max="500" step="0.1" value="5">
+            </label>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" id="signalsDemo" type="button">Démo fictive</button>
+            <button class="btn" id="signalsRun" type="button" disabled>Simuler sur les cours du radar</button>
+            <a class="text-link" href="#radar">Charger des cours M1 dans Mon radar ↗</a>
+          </div>
+          <p class="hint">La première règle entre à l’ouverture de la première bougie entière après réception.
+            La seconde attend sa clôture et entre à l’ouverture suivante si elle confirme le sens choisi.
+            Les deux sortent à la même clôture. Simulation sur bougies, avec coûts paramétrés.</p>
+          <div id="signalsResult" role="status"></div>
+        </details>
+      </section>`;
+
+    q('#signalsRefresh').onclick = async () => {
+      q('#signalsRefresh').disabled = true;
+      try {
+        await refresh();
+      } finally {
+        q('#signalsRefresh').disabled = false;
+      }
+    };
+
+    function eligible(event) {
+      return event?.delta && event.delta.value !== 0 && !event.estimated && !event.revised &&
+        event.effectiveAt >= event.date;
+    }
+
+    function render() {
+      const events = journal.list();
+      const current = events.find(event => event.id === selected);
+      q('#signalsRun').disabled = !eligible(current);
+      if (current) {
+        q('#signalsSelection').textContent = current.title + ' · reçu le ' + stamp(current.effectiveAt);
+        q('#signalsReplay').open = true;
+      }
+      const rows = events.filter(event => event.kind === 'fed' || event.actual);
+      const displayed = rows.slice(0, 40);
+      q('#signalsList').innerHTML = displayed.length ? `
+        <p class="hint">${displayed.length} affichés · ${rows.length} publiés · ${events.length - rows.length} en attente</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Publication</th><th>Chiffre</th><th>Consensus</th><th>Écart</th><th>Source</th></tr></thead>
+          <tbody>${displayed.map((event, index) => {
+            const delta = event.delta ?? event.indicativeDelta;
+            const consensus = event.consensus || event.reportedConsensus;
+            return `<tr>
+              <td><strong>${esc(event.title)}</strong><br><small>${esc(stamp(event.date))} ${esc(event.reference || '')}</small>
+                ${eligible(event) ? `<br><button class="btn ghost" type="button" data-signal="${index}">Tester ce signal</button>` : ''}
+                ${event.revised ? '<br><small>Chiffre révisé depuis la réception</small>' : ''}</td>
+              <td>${esc(event.actual || '—')}</td>
+              <td>${esc(consensus || '—')}${consensus ? (event.consensus ? ' · capté avant publication' : ' · fourni après coup') : ''}</td>
+              <td>${delta ? esc(num(delta.value, 4) + ' ' + delta.unit) : '—'}</td>
+              <td>${event.url ? `<a class="text-link" href="${esc(event.url)}" target="_blank" rel="noopener noreferrer">${esc(event.source)}</a>` : esc(event.source)}
+                <br><small>Reçu à ${esc(stamp(event.effectiveAt ?? event.observedAt))}</small></td>
+            </tr>`;
+          }).join('')}</tbody></table></div>` : '<p class="hint">Aucune publication reçue. Les annonces à venir s’affichent dans le calendrier.</p>';
+      host.querySelectorAll('[data-signal]').forEach(button => {
+        button.onclick = () => {
+          const event = displayed[Number(button.dataset.signal)];
+          selected = event.id;
+          q('#signalsSelection').textContent = event.title + ' · reçu le ' + stamp(event.effectiveAt);
+          q('#signalsResult').textContent = '';
+          q('#signalsRun').disabled = false;
+          q('#signalsReplay').open = true;
+          q('#signalsReplay').scrollIntoView({ block: 'nearest' });
+        };
+      });
+    }
+
+    function run(demo) {
+      try {
+        const event = journal.list().find(item => item.id === selected);
+        if (!demo && !eligible(event)) throw Error('Choisissez une surprise exploitable.');
+        const prices = demo ? { bars: demoBars, symbol: 'Démo fictive' } : root.RadarPanel?.minuteBars();
+        if (!prices) throw Error('Chargez des cours fournisseur en M1 dans Mon radar pour l’actif à tester.');
+        const results = replay(prices.bars, {
+          effectiveAt: demo ? demoTime : event.effectiveAt,
+          side: Number(q('#signalsSide').value),
+          minutes: q('#signalsMinutes').valueAsNumber,
+          feeBps: q('#signalsCosts').valueAsNumber,
+        });
+        q('#signalsResult').innerHTML = `<p><strong>${esc(prices.symbol)}${prices.source ? ' · ' + esc(prices.source) : ''}</strong></p>` + metrics([
+          ['Réaction immédiate, rendement net simulé', pct(results.baseline.net)],
+          ['Confirmation M1, rendement net simulé', results.confirmed ? pct(results.confirmed.net) : 'Aucune entrée'],
+        ]);
+      } catch (error) {
+        q('#signalsResult').textContent = error.message;
+      }
+    }
+
+    q('#signalsDemo').onclick = () => run(true);
+    q('#signalsRun').onclick = () => run(false);
+    render();
+    return {
+      calendar(rows, observedAt) { journal.ingestCalendar(rows, observedAt); render(); },
+      fed(rows, observedAt) { journal.ingestFed(rows, observedAt); render(); },
+    };
+  }
+
+  const api = { createJournal, replay, mount };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.MacroSignals = api;
+})(typeof window !== 'undefined' ? window : globalThis);
 (function(root){
 'use strict';
 const sources=[
@@ -966,16 +1191,22 @@ function utc(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T/.test(valu
 function calendar(raw){if(!Array.isArray(raw)||raw.length>10000)throw Error('Réponse calendrier invalide ou trop volumineuse.');return raw.map(x=>{if(!x||typeof x!=='object'||!x.Event||!x.Country||utc(x.Date)===null)throw Error('Événement incomplet : dates et origine non exploitables.');return {event:String(x.Event),country:String(x.Country),date:utc(x.Date),estimated:String(x.DateSpan)!=='0',actual:String(x.Actual??''),forecast:String(x.Forecast??''),previous:String(x.Previous??''),before:String(x.Revised??''),reference:String(x.Reference??''),source:String(x.Source??''),url:safeURL(x.SourceURL),importance:Number(x.Importance)||0,updated:utc(x.LastUpdate),delta:surprise(x.Actual,x.Forecast)}}).sort((a,b)=>a.date-b.date)}
 function reading(event){let text=(event.event||'').toLowerCase();if(/inflation|cpi|pce|price/.test(text))return 'Inflation : une surprise plus forte peut relever les taux attendus et le taux d’actualisation. Examiner composantes, effets de base, salaires et taux réels. Le dollar et les actions peuvent réagir autrement si le marché avait déjà intégré le risque.';if(/employment|payroll|job|unemployment|claim/.test(text))return 'Emploi : comparer créations, chômage, participation, salaires et révisions. Un chômage plus haut et des créations plus hautes n’ont pas la même signification. Croiser croissance et réaction des rendements obligataires.';if(/rate|fomc|monetary/.test(text))return 'Banque centrale : comparer la décision aux attentes antérieures, puis le langage, la trajectoire projetée et la conférence. Une baisse attendue peut accompagner une réaction négative si les perspectives se détériorent.';return 'Relier la surprise au régime de croissance, d’inflation et de liquidité. Vérifier l’unité, les révisions et les attentes antérieures ; chercher une confirmation dans les taux et les devises avant d’interpréter les indices ou les cryptos.'}
 function mount(host){
-let active=true,items=[],fedItems=[],timer,loadingFed=false,loadingCalendar=false;const abort=new AbortController,bridge=['127.0.0.1','localhost'].includes(location.hostname)&&location.port==='4173', q=s=>host.querySelector(s), h=esc;
+let active=true,items=[],fedItems=[],timer,loadingFed=false,loadingCalendar=false;const abort=new AbortController,online=location.protocol==='https:'&&!['127.0.0.1','localhost'].includes(location.hostname),bridge=online||['127.0.0.1','localhost'].includes(location.hostname)&&location.port==='4173', q=s=>host.querySelector(s), h=esc;
 const link=(url,label)=>'<a class="text-link" target="_blank" rel="noopener noreferrer" href="'+h(url)+'">'+h(label)+' ↗</a>';
 const stamp=t=>t==null?'non fourni':new Date(t).toLocaleString('fr-FR',{timeZone:'Europe/Paris',dateStyle:'short',timeStyle:'short'});
-host.innerHTML='<div class="section-head"><div><span class="tag">VEILLE MACRO / SOURCES & PUBLICATIONS</span><h2>Le chiffre, puis son contexte.</h2></div></div><div class="notice">Deux connexions disponibles : communiqués monétaires de la Fed sans clé ; calendrier Trading Economics avec votre clé. Chargement à la demande. Les autres sources sont des liens de lecture. Aucun moteur ne lit automatiquement chaque article ou chaque FOMC.</div><div class="details-grid"><section class="card"><h3>Publications officielles de la Fed</h3><p>Flux des communiqués de politique monétaire. Les titres et dates renvoient aux textes originaux.</p><button class="btn" id="mFed">Charger la Fed ↻</button><p id="mFedStatus" role="status" class="hint">Non chargé.</p><div id="mFedList"></div></section><section class="card"><h3>Calendrier économique</h3><label>Clé API Trading Economics<input type="password" id="mKey" autocomplete="off" maxlength="256" placeholder="Votre clé API personnelle"></label><p class="hint">Clé gardée uniquement dans ce formulaire ; transmise au fournisseur via le serveur local. Elle est effacée en quittant cette page. Les droits de données dépendent de votre abonnement.</p><div class="form-grid"><label>Du (UTC)<input type="date" id="mStart"></label><label>Au (UTC)<input type="date" id="mEnd"></label></div><button class="btn" id="mCalendar" style="margin-top:16px">Charger le calendrier ↻</button><p id="mStatus" role="status" class="hint">Non connecté : clé personnelle requise.</p><label><input type="checkbox" id="mAuto"> Actualiser toutes les 5 minutes, page visible</label></section></div><p class="hint">'+(bridge?'Serveur local disponible sur cette origine.':'Pour charger les flux, lancez DEMARRER.cmd puis ouvrez http://127.0.0.1:4173/#macro. Les liens restent accessibles dans le fichier autonome.')+'</p><label>Filtrer le calendrier : pays ou événement<input id="mFilter" type="search" placeholder="United States, inflation, interest rate…"></label><div id="mEvents"></div><div id="mReading" class="notice" hidden></div><details style="margin:24px 0"><summary>Lire chaque FOMC, du mensuel à M1</summary><ol><li>Avant : dater le scénario mensuel (croissance, inflation, crédit, liquidité) et les attentes de taux. Conserver le consensus avant l’annonce.</li><li>Décision : relever taux, votes et bilan ; comparer le communiqué au précédent. Les projections ne sont disponibles qu’à certaines réunions.</li><li>Conférence : distinguer ce qui change réellement du commentaire. Lire ensuite les minutes ; leur date de publication diffère de la réunion.</li><li>Transmission : examiner taux à 2 ans, courbe, taux réels, dollar, crédit et amplitude des mouvements. Une simultanéité ne prouve pas la causalité.</li><li>W / D : situer la réaction dans la structure. H4 / H1 : confirmer ou invalider le scénario. M15 / M5 / M1 : observer liquidité, spread et retournements ; une première impulsion n’est pas une validation.</li></ol><p>Ce protocole est une grille de lecture manuelle. Le flux ne réalise ni comparaison sémantique des textes, ni estimation d’une probabilité de krach.</p>'+link(sources[0][2],'Documents de toutes les réunions FOMC')+'</details><div class="cards">'+sources.map(([name,kind,url,desc])=>'<article class="card"><span class="tag">'+h(kind)+'</span><h3>'+h(name)+'</h3><p>'+h(desc)+'</p>'+link(url,'Consulter la source')+'</article>').join('')+'</div><p class="hint">Sources examinées le 25/10/2026 ; World Monitor et Global-Rates n’ont pas pu être consultés. Les liens de consultation ne sont pas des connexions automatiques. '+link('https://docs.tradingeconomics.com/economic_calendar/schema/','Définition des champs du calendrier')+'</p>';
+host.innerHTML='<div class="section-head"><div><span class="tag">VEILLE MACRO / SOURCES & PUBLICATIONS</span><h2>Le chiffre, puis son contexte.</h2></div></div><div class="notice">Deux connexions disponibles : communiqués monétaires de la Fed sans clé ; calendrier Trading Economics avec votre clé. Chargement à la demande. Les autres sources sont des liens de lecture. Aucun moteur ne lit automatiquement chaque article ou chaque FOMC.</div><div id="macroSignals" style="margin-bottom:24px"></div><div class="details-grid"><section class="card"><h3>Publications officielles de la Fed</h3><p>Flux des communiqués de politique monétaire. Les titres et dates renvoient aux textes originaux.</p><button class="btn" id="mFed">Charger la Fed ↻</button><p id="mFedStatus" role="status" class="hint">Non chargé.</p><div id="mFedList"></div></section><section class="card"><h3>Calendrier économique</h3><label>Clé API Trading Economics<input type="password" id="mKey" autocomplete="off" maxlength="256" placeholder="Votre clé API personnelle"></label><p class="hint">Clé gardée uniquement dans ce formulaire ; transmise au fournisseur via le serveur local. Elle est effacée en quittant cette page. Les droits de données dépendent de votre abonnement.</p><div class="form-grid"><label>Du (UTC)<input type="date" id="mStart"></label><label>Au (UTC)<input type="date" id="mEnd"></label></div><button class="btn" id="mCalendar" style="margin-top:16px">Charger le calendrier ↻</button><p id="mStatus" role="status" class="hint">Non connecté : clé personnelle requise.</p><label><input type="checkbox" id="mAuto"> Actualiser toutes les 5 minutes, page visible</label></section></div><p class="hint">'+(bridge?'Serveur local disponible sur cette origine.':'Pour charger les flux, lancez DEMARRER.cmd puis ouvrez http://127.0.0.1:4173/#macro. Les liens restent accessibles dans le fichier autonome.')+'</p><label>Filtrer le calendrier : pays ou événement<input id="mFilter" type="search" placeholder="United States, inflation, interest rate…"></label><div id="mEvents"></div><div id="mReading" class="notice" hidden></div><details style="margin:24px 0"><summary>Lire chaque FOMC, du mensuel à M1</summary><ol><li>Avant : dater le scénario mensuel (croissance, inflation, crédit, liquidité) et les attentes de taux. Conserver le consensus avant l’annonce.</li><li>Décision : relever taux, votes et bilan ; comparer le communiqué au précédent. Les projections ne sont disponibles qu’à certaines réunions.</li><li>Conférence : distinguer ce qui change réellement du commentaire. Lire ensuite les minutes ; leur date de publication diffère de la réunion.</li><li>Transmission : examiner taux à 2 ans, courbe, taux réels, dollar, crédit et amplitude des mouvements. Une simultanéité ne prouve pas la causalité.</li><li>W / D : situer la réaction dans la structure. H4 / H1 : confirmer ou invalider le scénario. M15 / M5 / M1 : observer liquidité, spread et retournements ; une première impulsion n’est pas une validation.</li></ol><p>Ce protocole est une grille de lecture manuelle. Le flux ne réalise ni comparaison sémantique des textes, ni estimation d’une probabilité de krach.</p>'+link(sources[0][2],'Documents de toutes les réunions FOMC')+'</details><div class="cards">'+sources.map(([name,kind,url,desc])=>'<article class="card"><span class="tag">'+h(kind)+'</span><h3>'+h(name)+'</h3><p>'+h(desc)+'</p>'+link(url,'Consulter la source')+'</article>').join('')+'</div><p class="hint">Sources examinées le 25/10/2026 ; World Monitor et Global-Rates n’ont pas pu être consultés. Les liens de consultation ne sont pas des connexions automatiques. '+link('https://docs.tradingeconomics.com/economic_calendar/schema/','Définition des champs du calendrier')+'</p>';
+const signals=MacroSignals.mount(q('#macroSignals'), refreshSources);
+async function refreshSources(){
+  const requests=[loadFed()];
+  if(q('#mKey').value.trim())requests.push(loadCalendar());
+  await Promise.allSettled(requests);
+}
 const day=d=>d.toISOString().slice(0,10);q('#mStart').value=day(new Date(Date.now()-86400000));q('#mEnd').value=day(new Date(Date.now()+6*86400000));
 function events(){const needle=q('#mFilter').value.trim().toLowerCase(),matches=items.filter(e=>(e.country+' '+e.event).toLowerCase().includes(needle));q('#mEvents').innerHTML=items.length?'<p class="hint">'+matches.length+' événements correspondant au filtre · 200 premiers affichés · Horaires Europe/Paris. « Estimée » : horaire fournisseur non confirmé.</p><div class="table-wrap"><table><thead><tr><th>Date / pays</th><th>Publication</th><th>Publié</th><th>Consensus</th><th>Précédent révisé</th><th>Écart publié − consensus</th></tr></thead><tbody>'+matches.slice(0,200).map(e=>'<tr><td>'+h(stamp(e.date))+(e.estimated?' · estimée':'')+'<br>'+h(e.country)+'</td><td><button class="btn ghost" data-event="'+items.indexOf(e)+'">'+h(e.event)+'</button><small> Référence : '+h(e.reference||'non fournie')+'</small></td><td>'+h(e.actual||'Non publié / absent')+'</td><td>'+h(e.forecast||'Absent')+'</td><td>'+h(e.previous||'Absent')+'</td><td>'+h(e.delta?num(e.delta.value,4)+' '+e.delta.unit:'Non calculable')+'</td></tr>').join('')+'</tbody></table></div><p class="hint">L’écart est brut, non standardisé ; il ne mesure pas une force de signal et ne se compare pas entre séries. Consensus fourni au téléchargement, non garanti identique à celui connu avant publication. Les valeurs absentes ne sont jamais remplacées par zéro.</p>':'<p class="hint">Aucun événement chargé.</p>';host.querySelectorAll('[data-event]').forEach(b=>b.onclick=()=>{let e=items[+b.dataset.event],el=q('#mReading');el.hidden=false;el.innerHTML='<h3>'+h(e.event)+' · '+h(e.country)+'</h3><p>'+h(reading(e))+'</p><p>Précédent après révision : '+h(e.previous||'absent')+' ; valeur antérieure à la révision : '+h(e.before||'non fournie')+'. Mise à jour fournisseur : '+h(stamp(e.updated))+'.</p><p>Source : '+h(e.source||'non fournie')+' '+(e.url?link(e.url,'Publication d’origine'):'')+'</p>'})}
-async function request(url,key){if(!bridge)throw Error('Ouvrez la version locale avec DEMARRER.cmd pour connecter les flux.');let res=await fetch(url,{headers:key?{'X-Data-Key':key}:undefined,signal:AbortSignal.any([abort.signal,AbortSignal.timeout(25000)])});if(!res.ok)throw Error('Source indisponible (HTTP '+res.status+'). Vérifiez accès, clé et quota.');return res}
-async function loadFed(){if(loadingFed)return;loadingFed=true;q('#mFed').disabled=true;q('#mFedStatus').textContent='Chargement…';try{const text=await (await request('/api/fed')).text(),doc=new DOMParser().parseFromString(text,'application/xml');if(doc.querySelector('parsererror')||!doc.querySelector('rss'))throw Error('Flux Fed invalide.');fedItems=[...doc.querySelectorAll('item')].slice(0,15).map(x=>({title:x.querySelector('title')?.textContent||'',url:safeURL(x.querySelector('link')?.textContent),date:Date.parse(x.querySelector('pubDate')?.textContent)})).filter(x=>x.title&&x.url&&new URL(x.url).hostname==='www.federalreserve.gov');if(!active)return;q('#mFedList').innerHTML=fedItems.map(x=>'<p>'+link(x.url,x.title)+'<br><small>'+h(Number.isFinite(x.date)?stamp(x.date):'Date non fournie')+'</small></p>').join('');q('#mFedStatus').textContent='Chargé le '+stamp(Date.now())+' · '+fedItems.length+' publications affichées. Dernière publication : '+(fedItems.length&&Number.isFinite(fedItems[0].date)?stamp(fedItems[0].date):'non fournie')}catch(e){if(active)q('#mFedStatus').textContent=e.message+' Les éventuels titres affichés restent ceux du chargement précédent.'}finally{loadingFed=false;if(active)q('#mFed').disabled=false}}
-async function loadCalendar(){if(loadingCalendar)return;loadingCalendar=true;q('#mCalendar').disabled=true;q('#mReading').hidden=true;try{const key=q('#mKey').value.trim(),start=q('#mStart').value,end=q('#mEnd').value;if(!key)throw Error('Saisissez votre clé API Trading Economics.');if(!start||!end||end<start||(Date.parse(end)-Date.parse(start))>31*86400000)throw Error('Choisissez une période de 31 jours maximum.');q('#mStatus').textContent='Chargement…';const raw=await(await request('/api/calendar?'+new URLSearchParams({start,end}),key)).json(),next=calendar(raw);if(!active)return;items=next;events();q('#mStatus').textContent='Chargé le '+stamp(Date.now())+' · période demandée (UTC) '+start+' → '+end+' · '+items.length+' événements retournés. Couverture selon abonnement.'}catch(e){if(active)q('#mStatus').textContent=e.message+' Les éventuels résultats affichés restent ceux du chargement précédent.'}finally{loadingCalendar=false;if(active)q('#mCalendar').disabled=false}}
-q('#mFed').onclick=loadFed;q('#mCalendar').onclick=loadCalendar;q('#mFilter').oninput=events;q('#mAuto').onchange=()=>{clearInterval(timer);if(q('#mAuto').checked)timer=setInterval(()=>{if(active&&!document.hidden){loadFed();if(q('#mKey').value.trim())loadCalendar()}},300000)};events();cleanups.push(()=>{active=false;clearInterval(timer);abort.abort();q('#mKey').value=''})
+async function request(url,key){if(!bridge)throw Error('Ouvrez la version locale avec DEMARRER.cmd pour connecter les flux.');if(online)url=url.replace('/api/','/.netlify/functions/');let res=await fetch(url,{headers:key?{'X-Data-Key':key}:undefined,signal:AbortSignal.any([abort.signal,AbortSignal.timeout(25000)])});if(!res.ok)throw Error('Source indisponible (HTTP '+res.status+'). Vérifiez accès, clé et quota.');return res}
+async function loadFed(){if(loadingFed)return;loadingFed=true;q('#mFed').disabled=true;q('#mFedStatus').textContent='Chargement…';try{const text=await (await request('/api/fed')).text(),doc=new DOMParser().parseFromString(text,'application/xml');if(doc.querySelector('parsererror')||!doc.querySelector('rss'))throw Error('Flux Fed invalide.');fedItems=[...doc.querySelectorAll('item')].slice(0,15).map(x=>({title:x.querySelector('title')?.textContent||'',url:safeURL(x.querySelector('link')?.textContent),date:Date.parse(x.querySelector('pubDate')?.textContent)})).filter(x=>x.title&&x.url&&new URL(x.url).hostname==='www.federalreserve.gov');if(!active)return;signals.fed(fedItems,Date.now());q('#mFedList').innerHTML=fedItems.map(x=>'<p>'+link(x.url,x.title)+'<br><small>'+h(Number.isFinite(x.date)?stamp(x.date):'Date non fournie')+'</small></p>').join('');q('#mFedStatus').textContent='Chargé le '+stamp(Date.now())+' · '+fedItems.length+' publications affichées. Dernière publication : '+(fedItems.length&&Number.isFinite(fedItems[0].date)?stamp(fedItems[0].date):'non fournie')}catch(e){if(active)q('#mFedStatus').textContent=e.message+' Les éventuels titres affichés restent ceux du chargement précédent.'}finally{loadingFed=false;if(active)q('#mFed').disabled=false}}
+async function loadCalendar(){if(loadingCalendar)return;loadingCalendar=true;q('#mCalendar').disabled=true;q('#mReading').hidden=true;try{const key=q('#mKey').value.trim(),start=q('#mStart').value,end=q('#mEnd').value;if(!key)throw Error('Saisissez votre clé API Trading Economics.');if(!start||!end||end<start||(Date.parse(end)-Date.parse(start))>31*86400000)throw Error('Choisissez une période de 31 jours maximum.');q('#mStatus').textContent='Chargement…';const raw=await(await request('/api/calendar?'+new URLSearchParams({start,end}),key)).json(),next=calendar(raw);if(!active)return;items=next;signals.calendar(items,Date.now());events();q('#mStatus').textContent='Chargé le '+stamp(Date.now())+' · période demandée (UTC) '+start+' → '+end+' · '+items.length+' événements retournés. Couverture selon abonnement.'}catch(e){if(active)q('#mStatus').textContent=e.message+' Les éventuels résultats affichés restent ceux du chargement précédent.'}finally{loadingCalendar=false;if(active)q('#mCalendar').disabled=false}}
+q('#mFed').onclick=loadFed;q('#mCalendar').onclick=loadCalendar;q('#mFilter').oninput=events;q('#mAuto').onchange=()=>{clearInterval(timer);if(q('#mAuto').checked)timer=setInterval(()=>{if(active&&!document.hidden)refreshSources()},300000)};events();cleanups.push(()=>{active=false;clearInterval(timer);abort.abort();q('#mKey').value=''})
 }
 const api={mount,calendar,surprise,utc,safeURL,reading};if(typeof module==='object'&&module.exports)module.exports=api;else root.MacroDesk=api;
 })(typeof window!=='undefined'?window:globalThis);
